@@ -38,9 +38,13 @@ export default function HelpPage() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
-  const [previousRecipes, setPreviousRecipes] = useState<Set<string>>(
-    new Set()
-  );
+  const [previousRecipes, setPreviousRecipes] = useState<
+    Record<string, Set<string>>
+  >({
+    breakfast: new Set(),
+    lunch: new Set(),
+    dinner: new Set(),
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -80,63 +84,75 @@ export default function HelpPage() {
     }
   };
 
-  const generateInitialPrompt = () => {
+  const generateInitialPrompt = (selectedMeal: string) => {
     if (!userSettings) return "";
 
     const dietaryRestriction =
       userSettings.dietaryPreferences !== "none"
-        ? `The recipe must be ${userSettings.dietaryPreferences}.`
+        ? `Ensure the recipe is **${userSettings.dietaryPreferences}**.`
         : "";
 
-    return `You are a **culinary expert** crafting fast yet **flavorful and unique** breakfast recipes that meet these nutritional requirements:
-
-        - **Protein:** ${userSettings.proteinPerMeal}g  
-        - **Fat:** ${userSettings.fatPerMeal}g  
-        - **Carbs:** ${userSettings.carbsPerMeal}g  
-        ${
-          dietaryRestriction
-            ? `- **Dietary Restriction:** ${dietaryRestriction}`
-            : ""
-        }
-        
-        Your recipe **must be different from** these previously suggested ones: ${Array.from(
-          previousRecipes
-        ).join(", ")}
-        
-        🎯 **Do NOT provide generic or boring options.** Instead, aim for **chef-level creativity** within a quick prep time.
-        
-        ### **Provide ONLY the following in markdown format:**
-        
-        # [Recipe Name]
-        
-        **Difficulty:** [Beginner / Intermediate / Advanced]  
-        
-        ## Ingredients
-        - [ingredient 1]
-        - [ingredient 2]  
-        ...
-        
-        ## Quick Instructions
-        1. [Step 1]
-        2. [Step 2]  
-        ...
-        
-        ## Nutritional Information
-        - **Protein:** [amount]g  
-        - **Fat:** [amount]g  
-        - **Carbs:** [amount]g  
-        - **Calories:** [amount]  
-        `;
+    return `You are a **culinary expert** crafting **creative, quick, and flavorful** ${selectedMeal.toLowerCase()} recipes that precisely match these macronutrient targets:
+  
+    - **Protein:** ${userSettings.proteinPerMeal}g  
+    - **Fat:** ${userSettings.fatPerMeal}g  
+    - **Carbs:** ${userSettings.carbsPerMeal}g  
+    ${
+      dietaryRestriction
+        ? `- **Dietary Restriction:** ${dietaryRestriction}`
+        : ""
+    }
+  
+    **🚫 Prohibited ingredients:** Do **NOT** use quinoa. Instead, use alternative carbohydrate sources such as rice, potatoes, oats, or whole-grain pasta.
+  
+    Your recipe **must not repeat** any of the following previously suggested ones:  
+    ${
+      Array.from(Object.values(previousRecipes).flat()).join(", ") || "None yet"
+    }
+  
+    🎯 **Your goal:**  
+    - Avoid generic, boring, or common meal ideas.  
+    - Think like a **Michelin-starred chef** who optimizes flavor, texture, and efficiency.  
+    - Ensure prep time is **under 20 minutes**.  
+  
+    ### **Provide ONLY the following in Markdown format:**
+  
+    # [Recipe Name]  
+  
+    **Difficulty:** [Beginner / Intermediate / Advanced]  
+  
+    ## Ingredients  
+    - [ingredient 1]  
+    - [ingredient 2]  
+    - ...  
+  
+    ## Quick Instructions  
+    1. [Step 1]  
+    2. [Step 2]  
+    - Keep it **clear, concise, and efficient**.  
+  
+    ## Nutritional Information  
+    - **Protein:** [amount]g  
+    - **Fat:** [amount]g  
+    - **Carbs:** [amount]g  
+    - **Calories:** [amount]  
+  
+    **Important:** The recipe **must match** the exact macronutrient targets given above, with a max variance of ±2g. Double-check the values before finalizing.`;
   };
 
   const extractRecipeName = (content: string): string => {
-    const match = content.match(/# (.*)/);
+    const match = content.match(/# (.*?)(\n|$)/);
     return match ? match[1].trim() : "";
   };
 
   const handleMealTypeChange = async (value: string) => {
     setMealType(value);
-    setMessages([]); // Clear previous messages
+    setMessages([]);
+    setPreviousRecipes({
+      breakfast: new Set(),
+      lunch: new Set(),
+      dinner: new Set(),
+    });
 
     if (!userSettings) {
       toast({
@@ -149,7 +165,6 @@ export default function HelpPage() {
 
     setIsLoading(true);
     try {
-      const initialPrompt = generateInitialPrompt();
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini-2024-07-18",
         messages: [
@@ -157,22 +172,25 @@ export default function HelpPage() {
             role: "system",
             content:
               value === "Breakfast"
-                ? "You are a master chef specializing in **exceptional breakfast recipes**. Your creations are flavorful, balanced, and exciting. Avoid generic or overly simplistic options—elevate classic breakfasts with unique ingredients, techniques, or unexpected twists. Format responses in markdown."
-                : "You are a world-class chef, known for crafting **incredible** ${mealType.toLowerCase()} recipes. Create **distinctive, restaurant-quality dishes** with creative ingredients and bold flavors. Avoid greetings and extra commentary. Format responses in markdown.",
+                ? `You are a master chef specializing in **exceptional ${value.toLowerCase()} recipes**. Your creations are flavorful, balanced, and exciting. Avoid generic or overly simplistic options—elevate classic breakfasts with unique ingredients, techniques, or unexpected twists. Format responses in markdown.`
+                : `You are a world-class chef, known for crafting **incredible** ${value.toLowerCase()} recipes. Create **distinctive, restaurant-quality dishes** with creative ingredients and bold flavors. Avoid greetings and extra commentary. Format responses in markdown.`,
           },
-          { role: "user", content: initialPrompt },
+          { role: "user", content: generateInitialPrompt(value) },
         ],
-        temperature: 0.9, // Increase randomness for variety
+        temperature: 1.2, // Increase randomness for variety
       });
 
       const recipe = response.choices[0].message.content;
       if (recipe) {
         const recipeName = extractRecipeName(recipe);
-        setPreviousRecipes((prev) => {
-          const newSet = new Set(Array.from(prev));
-          newSet.add(recipeName);
-          return newSet;
-        });
+        setPreviousRecipes((prev) => ({
+          ...prev,
+          [value.toLowerCase()]: new Set([
+            ...prev[value.toLowerCase()],
+            recipeName,
+          ]),
+        }));
+
         setMessages((prev) => [
           ...prev,
           { role: "assistant", content: recipe },
